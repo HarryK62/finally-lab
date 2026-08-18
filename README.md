@@ -71,6 +71,12 @@ priced. With a key it polls the real Massive snapshot API, where only genuine
 symbols return data. Symbols that work in simulator mode may therefore go unpriced
 in Massive mode.
 
+Massive mode needs a plan entitled to the **real-time snapshot** endpoint
+(`/v2/snapshot/locale/us/markets/stocks/tickers`). Plans limited to aggregates
+return `403 NOT_AUTHORIZED` for every poll, which leaves all prices `null` and
+makes nothing tradeable — `execute_trade` rejects any order without a cached
+price. The simulator is the recommended default.
+
 ## Security
 
 There is **no authentication** — anyone who can reach the port can trade and can spend
