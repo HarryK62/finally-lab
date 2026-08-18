@@ -10,6 +10,7 @@ thread so the event loop is never blocked by SQLite.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 
 from anyio import from_thread
@@ -123,6 +124,26 @@ def has_position(ticker: str, user_id: str = DEFAULT_USER_ID) -> bool:
     return row is not None
 
 
+def get_held_tickers(user_id: str = DEFAULT_USER_ID) -> list[str]:
+    """Tickers the user still holds shares of, alphabetically.
+
+    Blocking helper used at startup: a held position must stay on the price feed
+    even when it is not watched, or it would be unvalued and unsellable (see
+    :func:`app.services.watchlist.get_startup_tickers`).
+    """
+    ensure_db()
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT ticker FROM positions
+            WHERE user_id = ? AND quantity > ?
+            ORDER BY ticker ASC
+            """,
+            (user_id, QUANTITY_EPSILON),
+        ).fetchall()
+    return [row["ticker"] for row in rows]
+
+
 def _stop_streaming(ticker: str) -> None:
     """Drop a ticker from the live feed once it is neither held nor watched.
 
@@ -204,7 +225,10 @@ def execute_trade(
     ensure_db()
     ticker = normalize_ticker(ticker)
 
-    if quantity <= 0:
+    # NaN/Infinity survive JSON parsing and Pydantic's float, and `NaN <= 0` is
+    # False — so without isfinite a NaN quantity poisons the arithmetic all the
+    # way down to a NOT NULL violation and a 500.
+    if not math.isfinite(quantity) or quantity <= 0:
         raise HTTPException(status_code=400, detail="Quantity must be greater than zero")
 
     side = side.strip().lower()

@@ -96,6 +96,17 @@ def test_malformed_trade_body_is_422(client):
     assert client.post("/api/portfolio/trade", json={"ticker": "AAPL"}).status_code == 422
 
 
+def test_nan_quantity_is_400_not_500(client):
+    """Python's json accepts the non-standard NaN literal; the guard must too."""
+    response = client.post(
+        "/api/portfolio/trade",
+        content=b'{"ticker": "AAPL", "quantity": NaN, "side": "buy"}',
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Quantity must be greater than zero"}
+
+
 def test_history_is_empty_then_populated(client):
     assert client.get("/api/portfolio/history").json() == {"snapshots": []}
 

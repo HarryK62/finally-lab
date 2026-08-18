@@ -3,6 +3,19 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def no_developer_credentials(monkeypatch):
+    """Scrub provider credentials so no test depends on the developer's `.env`.
+
+    `app.config` loads the repo-root `.env` at import time. Without this, a
+    developer who has configured `MASSIVE_API_KEY` gets `MassiveDataSource` in
+    every lifespan test — which then makes real HTTP calls to api.massive.com and
+    fails on prices that never arrive. Tests must be hermetic and offline.
+    """
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+
 @pytest.fixture
 def event_loop_policy():
     """Use the default event loop policy for all async tests."""

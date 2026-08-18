@@ -271,3 +271,56 @@ def test_a_close_out_off_the_event_loop_leaves_the_feed_alone(
 
     assert evicting_source.removed == []
     assert price_cache.get_price("PLTR") == pytest.approx(50.00)
+
+
+# --- Startup seeding
+#
+# The feed protection above only lives in the running process. Seeding the source
+# from the watchlist alone would drop a held-but-unwatched ticker at the next
+# restart, which is exactly the state those tests exist to prevent.
+
+
+async def test_get_startup_tickers_includes_a_held_but_unwatched_ticker(
+    temp_db, price_cache, evicting_source
+):
+    evicting_source.tick("TSLA", 250.00)
+    await _trade("TSLA", 5, "buy")
+    await svc.remove_ticker("TSLA")
+
+    tickers = svc.get_startup_tickers()
+
+    watched = svc.get_watchlist_tickers()
+    assert "TSLA" not in watched
+    assert "TSLA" in tickers
+    assert tickers == [*watched, "TSLA"]  # watchlist order first, held extras appended
+
+
+async def test_get_startup_tickers_does_not_duplicate_a_watched_holding(
+    temp_db, price_cache, evicting_source
+):
+    evicting_source.tick("AAPL", 190.00)
+    await _trade("AAPL", 5, "buy")
+
+    tickers = svc.get_startup_tickers()
+
+    assert tickers.count("AAPL") == 1
+    assert tickers == list(SEED_PRICES)
+
+
+async def test_get_startup_tickers_drops_a_closed_out_position(
+    temp_db, price_cache, evicting_source
+):
+    evicting_source.tick("TSLA", 250.00)
+    await _trade("TSLA", 5, "buy")
+    await svc.remove_ticker("TSLA")
+    await _trade("TSLA", 5, "sell")
+
+    assert "TSLA" not in svc.get_startup_tickers()
+
+
+def test_get_held_tickers_ignores_dust(temp_db, price_cache):
+    price_cache.update("PLTR", 50.00)
+    portfolio_svc.execute_trade("PLTR", 1, "buy")
+    portfolio_svc.execute_trade("PLTR", 1, "sell")
+
+    assert portfolio_svc.get_held_tickers() == []

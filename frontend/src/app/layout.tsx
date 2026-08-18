@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -22,7 +23,10 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Typed explicitly rather than with Next's generated `LayoutProps<"/">` global,
+// which only exists in `.next/types` after a build — `npm run typecheck` has to
+// pass on a fresh clone too.
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="en"

@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalProvider, useTerminal, usePrice } from "./terminal";
 import { ApiError, api } from "@/lib/api";
@@ -51,6 +51,7 @@ function Probe() {
       </span>
       <span data-testid="selected">{terminal.selected ?? "none"}</span>
       <span data-testid="aapl-price">{aapl ?? "none"}</span>
+      <span data-testid="buffered">{Object.keys(terminal.buffers).sort().join(",") || "none"}</span>
       <button type="button" onClick={() => void terminal.addTicker("PYPL")}>
         add
       </button>
@@ -206,6 +207,76 @@ describe("usePrice", () => {
     mount();
     await settled();
     expect(text("aapl-price")).toBe("none");
+  });
+});
+
+/**
+ * A hand-driven EventSource so a test can stream a tick and inspect which
+ * sparkline buffers survive the prune.
+ */
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  readyState = 1;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this);
+  }
+
+  close() {
+    this.readyState = 2;
+  }
+
+  emit(payload: unknown) {
+    act(() => this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(payload) })));
+  }
+}
+
+function streamTick(ticker: string, price: number) {
+  FakeEventSource.instances.at(-1)!.emit({
+    [ticker]: {
+      ticker,
+      price,
+      previous_price: price,
+      timestamp: 1_755_439_402.48,
+      change: 0,
+      change_percent: 0,
+      direction: "flat",
+    },
+  });
+}
+
+describe("sparkline buffer pruning", () => {
+  let original: unknown;
+
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    original = (globalThis as Record<string, unknown>).EventSource;
+    (globalThis as Record<string, unknown>).EventSource = FakeEventSource;
+  });
+
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).EventSource = original;
+  });
+
+  it("keeps a held ticker's buffer even when it is off the watchlist", async () => {
+    // The positions table and the heatmap can both select an unwatched holding;
+    // pruning to the watchlist alone left its chart stuck on "accumulating".
+    mocked.watchlist.mockResolvedValue({ tickers: [watched("AAPL", 185)] });
+    mocked.portfolio.mockResolvedValue({
+      ...PORTFOLIO,
+      positions: [position("AAPL", 10, 180, 185), position("TSLA", 5, 250, 260)],
+    });
+    mount();
+    await settled();
+
+    streamTick("AAPL", 185);
+    streamTick("TSLA", 260);
+    streamTick("ZZZZ", 1); // neither watched nor held — this is the one to drop
+
+    await waitFor(() => expect(text("buffered")).toBe("AAPL,TSLA"));
   });
 });
 

@@ -436,9 +436,10 @@ cd frontend && npm run dev                          # frontend on :3000 (proxies
 cd frontend && npm run build                        # static export → frontend/out
 ```
 
-**Docker IS available in this environment** (verified 2026-08-17: daemon server 29.6.1; the
-image builds and runs). An earlier revision of this section claimed the opposite — that claim was
-stale and is retracted. Build and run the container for real rather than validating by inspection.
+**Both run paths are supported; check `docker info` before relying on Docker.** Availability has
+varied between machines (a daemon was reachable on 2026-08-17, absent on 2026-08-18), so treat it
+as something to verify rather than assume. When the daemon is up, build and run the container for
+real rather than validating by inspection; when it is not, use the local uvicorn path below.
 
 ```bash
 docker compose up -d --build && curl http://localhost:8000/api/health

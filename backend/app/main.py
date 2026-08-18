@@ -4,7 +4,7 @@ Startup order matters:
 
 1. Initialize and seed the SQLite database.
 2. Create the market data source (simulator or Massive) and start it on the
-   tickers currently in the watchlist.
+   watched tickers plus any still-held positions.
 3. Launch the background task that snapshots portfolio value every 30 seconds.
 
 Static files are mounted **last**, after every ``/api`` router, so unknown
@@ -33,7 +33,7 @@ from app.db.database import init_db
 from app.market import create_market_data_source, create_stream_router
 from app.runtime import get_price_cache, set_market_source
 from app.services.portfolio import record_snapshot
-from app.services.watchlist import get_watchlist_tickers
+from app.services.watchlist import get_startup_tickers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await to_thread.run_sync(init_db)
 
     source = create_market_data_source(get_price_cache())
-    tickers = await to_thread.run_sync(get_watchlist_tickers)
+    tickers = await to_thread.run_sync(get_startup_tickers)
     await source.start(tickers)
     set_market_source(source)
 
