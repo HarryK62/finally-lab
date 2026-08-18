@@ -20,8 +20,11 @@ and the `health` / `portfolio` / `watchlist` routers — plus their tests.
 
 ## Hard rules
 
-- **`backend/app/market/**` is frozen.** It is complete, reviewed, and 73-tests green. Read it,
-  import from it, never edit it. If you believe it has a bug, report it — do not fix it.
+- **`backend/app/market/**` is stable — change it only with cause.** It is complete, reviewed and
+  green. Read it and import from it; do not reshape it to suit a caller. A real bug there is worth
+  fixing, with a regression test and a note in the PR saying why — say so rather than working
+  around it silently. The SSE **wire format** in CONTRACTS.md §6 is a separate promise and stays
+  fixed: the frontend parses it.
 - **Own only your files** per the ownership table in CONTRACTS.md §1. Never create
   `app/llm/**`, `app/api/chat.py`, `frontend/**`, `test/**`, or the Dockerfile.
 - **The contract is exact.** Response field names, status codes, rounding, and sort orders in
