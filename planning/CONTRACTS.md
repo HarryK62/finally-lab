@@ -17,7 +17,7 @@ Each path has exactly one owning agent. **Do not create or edit files owned by a
 
 | Path | Owner |
 |---|---|
-| `backend/app/market/**` | **NOBODY — frozen.** Complete and tested. Read-only for all agents. |
+| `backend/app/market/**` | **Stable — change only with cause.** Complete and tested; not a place for casual edits. A fix lands with a regression test and a note in the PR saying why. |
 | `backend/app/config.py`, `runtime.py`, `main.py` | backend-engineer |
 | `backend/app/db/**` | backend-engineer |
 | `backend/app/schemas.py` | backend-engineer |
@@ -32,6 +32,18 @@ Each path has exactly one owning agent. **Do not create or edit files owned by a
 | `test/**` | qa-engineer |
 | `backend/pyproject.toml` | backend-engineer owns; ai-engineer may **append** deps only |
 | `planning/**`, `CLAUDE.md`, `README.md` | orchestrator |
+
+An earlier revision marked `backend/app/market/**` **frozen** and read-only for everyone. Two
+justified fixes have since landed in it, so that wording no longer described reality:
+
+- `3e8418e` — `massive_client.py` passed a `SnapshotMarketType` enum where the SDK interpolates
+  `market_type` into the request path, so every Massive poll 404'd on a malformed URL. Massive
+  mode could not have worked without this.
+- `38cf472` — `stream.py` only yielded on a cache-version change, leaving a stalled stream silent
+  for an idle proxy to drop. Added a comment-only keepalive.
+
+The bar is "complete and tested, so change it deliberately", not "never touch it". The SSE **wire
+format** in §6 is a separate promise and remains fixed: the frontend parses it.
 
 ---
 
@@ -64,7 +76,7 @@ backend/app/
 │   ├── prompts.py     # system prompt + context builder
 │   ├── schemas.py     # structured-output Pydantic models
 │   └── mock.py        # LLM_MOCK=true deterministic responses
-└── market/            # FROZEN
+└── market/            # stable - see §1
 ```
 
 ### `runtime.py` — the shared-state contract
@@ -301,14 +313,16 @@ Request `{"ticker": "pypl"}` → the single `WatchlistItem` object (same shape a
 ### `DELETE /api/watchlist/{ticker}` → 204, empty body
 - Not present → `404 "PYPL is not in the watchlist"`
 
-### `GET /api/stream/prices` — SSE, already implemented (frozen)
+### `GET /api/stream/prices` — SSE, already implemented
 Each event's `data:` is an object keyed by ticker:
 ```json
 {"AAPL": {"ticker":"AAPL","price":195.0,"previous_price":194.5,"timestamp":1755439402.48,
           "change":0.5,"change_percent":0.26,"direction":"up"}}
 ```
-Note `timestamp` here is **Unix seconds (float)**, not ISO — this endpoint is frozen, so the
-frontend adapts to it. A `retry: 1000` directive is sent first.
+Note `timestamp` here is **Unix seconds (float)**, not ISO — this endpoint's **wire format is
+fixed** and the frontend adapts to it. A `retry: 1000` directive is sent first. The stream may
+also emit comment-only keepalives (`: ping`) when the producer stalls; `EventSource` ignores
+comments, so they are invisible to the client.
 
 ### `POST /api/chat` → 200 (ai-engineer)
 Request: `{"message": "buy 5 tesla"}`
