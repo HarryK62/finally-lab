@@ -14,6 +14,66 @@ Reference documents: `planning/PLAN.md`, `planning/CONTRACTS.md`,
 
 ---
 
+## 0. Resolution — all findings closed (2026-08-18)
+
+**Every finding in this review has been addressed.** The findings below are left as written:
+they were accurate against `34b11b2` and are the record of what was wrong, not a live worklist.
+This section is the index of what happened.
+
+| Finding | Status | Landed in |
+|---|---|---|
+| §4.1 held position loses its price feed across a restart | Fixed | `f00b2d4` (#1) |
+| §4.2 non-finite quantity reaches SQLite and returns a 500 | Fixed | `f00b2d4` (#1) |
+| §4.3 `npm run typecheck` fails on a fresh clone | Fixed | `f00b2d4` (#1) |
+| §4.4 held-but-unwatched ticker can be selected but never charts | Fixed | `f00b2d4` (#1) |
+| §4.5 SSE stream has no heartbeat | Fixed | `38cf472` (#6) |
+| §4.5 `portfolio_snapshots` grows without bound | Fixed | `e39f2cd` (#8) |
+| §4.5 simulator invents a price for any symbol | Documented | `f00b2d4` (#1) |
+| §4.5 no authentication, by design | Documented | `f00b2d4` (#1) |
+| §5 documentation drift (all four items) | Fixed | `f00b2d4` (#1) |
+| §5 `CONTRACTS.md` §10 Docker claim | Softened | `f00b2d4` (#1) |
+
+Two §4.5 observations were deliberately left alone, as the review itself framed them:
+
+- **`PriceCache.version` reads without the lock.** Harmless under the GIL; a real race only on a
+  free-threaded build. Noted, not changed.
+- **`create_stream_router` mutates a module-level router.** `main.py` already memoises around the
+  footgun, and the workaround is correct.
+
+### Found while fixing, not in the review
+
+- **The Massive poller could never have worked.** `massive_client.py` passed a
+  `SnapshotMarketType` enum where the SDK interpolates `market_type` into the request path, so
+  every poll 404'd on a malformed URL. Fixed in `3e8418e` (#1). Every existing test patched
+  `_fetch_snapshots` out, which is why nothing caught it.
+- **The backend suite was not hermetic.** `app.config` loads the repo-root `.env` at import, so a
+  developer with `MASSIVE_API_KEY` set got `MassiveDataSource` in three lifespan tests, which then
+  made real network calls and failed. An autouse fixture now scrubs both provider keys
+  (`3e8418e`). The suite passed at review time only because no `.env` existed.
+- **`CONTRACTS.md` declared `backend/app/market/**` frozen** while two justified fixes landed in
+  it. Wording reconciled in `8ee2699` (#7).
+
+### Still unverified
+
+- **The Docker image** — no daemon available on the machines used. Unchanged from §2.
+- **A live LLM call** — no `OPENROUTER_API_KEY` exercised.
+- **Massive against real data.** A key was supplied and authenticates, but its plan is not
+  entitled to the real-time snapshot endpoint the poller uses (`403 NOT_AUTHORIZED`), which
+  leaves every price `null`. The app runs on the simulator by choice. Documented in `README.md`
+  and `7465889` (#1).
+
+### Current numbers
+
+| Suite | At review (`34b11b2`) | Now (`2270e78`) |
+|---|---|---|
+| Backend | 226 passed, 96% coverage | **274 passed, 97%** |
+| Frontend | 202 passed | **203 passed** |
+| E2E | 30 passed | **30 passed** |
+| `app/market/stream.py` coverage | 42% | **94%** |
+| CI running these suites | none existed | **3 jobs per PR, enforced by branch protection** |
+
+---
+
 ## 1. Verdict
 
 The build is in good shape and matches its own contract closely. All three test suites pass,
@@ -112,6 +172,9 @@ What is done particularly well:
 
 ### 4.1 A held position loses its price feed across a restart — Medium
 
+> **FIXED** in `f00b2d4` (#1). `get_startup_tickers()` seeds the feed from watchlist ∪ held
+> positions. Verified against a real restart: the position prices live and sells successfully.
+
 `app/services/watchlist.py:144` deliberately keeps a ticker on the live feed when the user removes
 it from the watchlist but still holds shares, because `execute_trade` rejects any order without a
 cached price. That protection exists only in the running process. `app/main.py:61` starts the market
@@ -143,6 +206,9 @@ A `SELECT ticker FROM positions WHERE user_id = ? AND quantity > 1e-9` unioned i
 
 ### 4.2 A non-finite quantity reaches SQLite and returns a 500 — Low
 
+> **FIXED** in `f00b2d4` (#1) with the `math.isfinite` guard below. Covered by a service test
+> (NaN/±inf) and an API test posting the raw `NaN` literal.
+
 Python's `json` module (which Starlette uses) accepts the non-standard `NaN` / `Infinity` literals,
 and Pydantic's `float` accepts them. `execute_trade` guards `quantity <= 0` (`services/portfolio.py:207`),
 which is `False` for `NaN`, so a NaN quantity flows through the arithmetic — `total`, `new_quantity`
@@ -168,6 +234,9 @@ path but not for the LLM path, which calls the service directly.)
 
 ### 4.3 `npm run typecheck` fails on a fresh clone — Low
 
+> **FIXED** in `f00b2d4` (#1) by typing the layout props explicitly. CI now runs `typecheck`
+> before `build`, so the fresh-checkout case keeps being exercised.
+
 ```
 src/app/layout.tsx(25,50): error TS2304: Cannot find name 'LayoutProps'.
 ```
@@ -183,6 +252,8 @@ globals.
 
 ### 4.4 A held-but-unwatched ticker can be selected but never charts — Low
 
+> **FIXED** in `f00b2d4` (#1). Buffers prune against watchlist ∪ position tickers.
+
 `state/terminal.tsx:186` prunes sparkline buffers down to the watchlist. But both `PositionsTable`
 and `PortfolioHeatmap` call `select(position.ticker)`, and a position can legitimately be off the
 watchlist (§4.1's scenario, while the process is still up). Selecting one leaves `MainChart` on
@@ -192,6 +263,9 @@ that ticker *are* streaming — its buffer is discarded on every render.
 **Fix:** prune against watchlist tickers ∪ position tickers.
 
 ### 4.5 Smaller observations
+
+> Status per item in §0. The heartbeat and `portfolio_snapshots` growth are fixed; the
+> `PriceCache.version` and `create_stream_router` notes were deliberately left.
 
 - **`PriceCache.version` reads without the lock** (`app/market/cache.py:64`). Carried over from the
   earlier review, still open; harmless under the GIL, a real race on a free-threaded build. The module
@@ -254,6 +328,10 @@ already; it would be safer as "either path is supported; check `docker info` bef
 ---
 
 ## 6. Recommended order of work
+
+> **Items 1-5 are complete** — see §0 for what landed where. Item 6 is still open: neither the
+> Docker image nor a live LLM call has been exercised, and Massive now has a third unverified
+> path of its own (the supplied key is not entitled to the endpoint the poller uses).
 
 1. **§4.1** — start the price feed from watchlist ∪ held positions (`app/main.py`), with a regression test.
 2. **§4.3** — make `npm run typecheck` pass on a clean checkout.
