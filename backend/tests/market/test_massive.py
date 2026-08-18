@@ -199,3 +199,27 @@ class TestMassiveDataSource:
         assert cache.get_price("AAPL") == 190.50
 
         await source.stop()
+
+
+class TestFetchSnapshotsRequest:
+    """The request `_fetch_snapshots` actually builds.
+
+    Every test above patches `_fetch_snapshots` out, so the call it makes was
+    never exercised. It was wrong: `SnapshotMarketType` is a plain `Enum`, not a
+    `str` subclass, and the SDK interpolates `market_type` straight into the
+    request path — passing the member produced
+    `/v2/snapshot/locale/us/markets/SnapshotMarketType.STOCKS/tickers` and every
+    live poll 404'd.
+    """
+
+    def test_market_type_is_sent_as_a_url_safe_string(self):
+        source = MassiveDataSource(api_key="test-key", price_cache=PriceCache())
+        source._tickers = ["AAPL", "MSFT"]
+        source._client = MagicMock()
+
+        source._fetch_snapshots()
+
+        kwargs = source._client.get_snapshot_all.call_args.kwargs
+        assert kwargs["market_type"] == "stocks"
+        assert "SnapshotMarketType" not in str(kwargs["market_type"])
+        assert kwargs["tickers"] == ["AAPL", "MSFT"]

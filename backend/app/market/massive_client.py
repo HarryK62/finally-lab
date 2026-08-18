@@ -121,8 +121,14 @@ class MassiveDataSource(MarketDataSource):
             # Common failures: 401 (bad key), 429 (rate limit), network errors.
 
     def _fetch_snapshots(self) -> list:
-        """Synchronous call to the Massive REST API. Runs in a thread."""
+        """Synchronous call to the Massive REST API. Runs in a thread.
+
+        ``market_type`` is passed as ``.value``: :class:`SnapshotMarketType` is a
+        plain ``Enum``, not a ``str`` subclass, and the SDK interpolates it
+        straight into the request path. Passing the member builds
+        ``/markets/SnapshotMarketType.STOCKS/tickers`` and every poll 404s.
+        """
         return self._client.get_snapshot_all(
-            market_type=SnapshotMarketType.STOCKS,
+            market_type=SnapshotMarketType.STOCKS.value,
             tickers=self._tickers,
         )
