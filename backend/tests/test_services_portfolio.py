@@ -207,6 +207,16 @@ def test_non_positive_quantity_is_rejected(temp_db, seeded_prices, quantity):
     assert exc_info.value.detail == "Quantity must be greater than zero"
 
 
+@pytest.mark.parametrize("quantity", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_quantity_is_rejected(temp_db, seeded_prices, quantity):
+    """`NaN <= 0` is False, so NaN once reached SQLite and 500ed on NOT NULL."""
+    with pytest.raises(HTTPException) as exc_info:
+        svc.execute_trade("AAPL", quantity, "buy")
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Quantity must be greater than zero"
+
+
 def test_unknown_side_is_rejected(temp_db, seeded_prices):
     with pytest.raises(HTTPException) as exc_info:
         svc.execute_trade("AAPL", 1, "hodl")

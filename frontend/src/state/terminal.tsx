@@ -180,11 +180,23 @@ export function TerminalProvider({ children }: { children: ReactNode }) {
     [loadWatchlist, loadPortfolio],
   );
 
-  // Sparklines only matter for tickers we still display; drop the rest.
-  const watchedTickers = useMemo(() => watchlist.map((item) => item.ticker), [watchlist]);
+  // Sparklines only matter for tickers we still display; drop the rest. Held
+  // positions count as displayed even when unwatched — the positions table and
+  // the heatmap can both select one, and the chart needs its buffer to draw.
+  const liveTickers = useMemo(() => {
+    const tickers = watchlist.map((item) => item.ticker);
+    const seen = new Set(tickers);
+    for (const position of portfolio?.positions ?? []) {
+      if (!seen.has(position.ticker)) {
+        seen.add(position.ticker);
+        tickers.push(position.ticker);
+      }
+    }
+    return tickers;
+  }, [watchlist, portfolio]);
   const liveBuffers = useMemo(
-    () => (watchedTickers.length === 0 ? buffers : pruneBuffers(buffers, watchedTickers)),
-    [buffers, watchedTickers],
+    () => (liveTickers.length === 0 ? buffers : pruneBuffers(buffers, liveTickers)),
+    [buffers, liveTickers],
   );
 
   const value = useMemo<TerminalState>(

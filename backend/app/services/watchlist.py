@@ -18,7 +18,7 @@ from app.config import DEFAULT_USER_ID
 from app.db.database import ensure_db, get_connection, new_id, utc_now_iso, write_connection
 from app.runtime import get_market_source, get_price_cache
 from app.schemas import WatchlistItem, WatchlistResponse
-from app.services.portfolio import api_round, has_position, normalize_ticker
+from app.services.portfolio import api_round, get_held_tickers, has_position, normalize_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +107,23 @@ def _delete_row(ticker: str, user_id: str) -> None:
 
 
 def get_watchlist_tickers(user_id: str = DEFAULT_USER_ID) -> list[str]:
-    """Blocking helper used by the lifespan to seed the market data source."""
+    """Blocking helper: the watched tickers, oldest first."""
     return [row["ticker"] for row in _select_rows(user_id)]
+
+
+def get_startup_tickers(user_id: str = DEFAULT_USER_ID) -> list[str]:
+    """Watched tickers plus any still held, used by the lifespan to seed the feed.
+
+    :func:`remove_ticker` keeps a held-but-unwatched ticker on the live feed, but
+    that only holds for the running process. Seeding from the watchlist alone
+    would drop such a position after a restart, freezing its P&L at cost and
+    making it unsellable — ``execute_trade`` rejects any order without a cached
+    price. Watchlist order is preserved; held extras are appended.
+    """
+    tickers = get_watchlist_tickers(user_id)
+    watched = set(tickers)
+    tickers.extend(t for t in get_held_tickers(user_id) if t not in watched)
+    return tickers
 
 
 # --- Public API ---

@@ -1,3 +1,8 @@
+> **Archived and stale.** This README review was written before the platform was
+> built, when only `backend/` and `planning/` existed. Every finding in it has
+> since been overtaken by the build; it is kept for history only. For the current
+> assessment see `planning/MARKET_DATA_REVIEW.md`.
+
 # README.md — Review Findings
 
 Review of `/README.md` (root) as of commit `14550e1`, branch `main`. No changes made — findings only.
