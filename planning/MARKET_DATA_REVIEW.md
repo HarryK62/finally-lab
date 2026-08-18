@@ -53,14 +53,44 @@ Two §4.5 observations were deliberately left alone, as the review itself framed
 - **`CONTRACTS.md` declared `backend/app/market/**` frozen** while two justified fixes landed in
   it. Wording reconciled in `8ee2699` (#7).
 
+### The Docker image — now verified (2026-08-18)
+
+§2 recorded this as unrun because no daemon was available. Docker was installed on the sprite VM
+(`docker.io` + `docker-buildx` + `docker-compose-v2`, overlay2 driver, `dockerd` registered as a
+sprite service since there is no systemd) and the packaging layer was exercised end to end:
+
+| | Result |
+|---|---|
+| `docker build` | succeeds — 697MB image |
+| Container boots | `/api/health` → `{"status":"ok","market_source":"simulator","llm_mock":true}` |
+| Frontend served from the image | `GET /` → 200, 16,525 bytes |
+| §9 routing | `/api/nope` → JSON 404; `/settings/…` → 200 SPA fallback |
+| Trade, SSE, mocked chat | all work through the container |
+| **E2E against the shipped image** | **30 passed, 43.2s** |
+
+**One gap remains inside this one.** `test/docker-compose.test.yml` could not be run as written:
+its Playwright container fails at `runc` with
+
+```
+error spawning mount remapping thread: open container mntns: permission denied
+```
+
+— the sandboxed VM refusing the mount-namespace remapping that container's bind mounts need. The
+`app` service came up healthy in the same compose run; only the browser sibling failed, so this is
+an environment limit rather than a defect in the compose file. The E2E result above was obtained
+by the other supported route: the shipped image running, with the host's Playwright pointed at it
+through the config's own `E2E_EXTERNAL_SERVER=1` path. That answers the question compose exists to
+answer — do the specs pass against the image that ships? — with only the browser's location
+differing. **The compose file itself is still unexercised.**
+
 ### Still unverified
 
-- **The Docker image** — no daemon available on the machines used. Unchanged from §2.
 - **A live LLM call** — no `OPENROUTER_API_KEY` exercised.
 - **Massive against real data.** A key was supplied and authenticates, but its plan is not
   entitled to the real-time snapshot endpoint the poller uses (`403 NOT_AUTHORIZED`), which
   leaves every price `null`. The app runs on the simulator by choice. Documented in `README.md`
   and `7465889` (#1).
+- **`test/docker-compose.test.yml`** — see above.
 
 ### Current numbers
 
@@ -105,7 +135,7 @@ Everything below was actually run, in this environment, on the reviewed commit.
 | Frontend build | `npm run build` | static export OK (`out/index.html` produced, 4 pages) |
 | Frontend typecheck | `npm run typecheck` (`tsc --noEmit`) | **fails on a clean checkout**, passes after a build — see §4.3 |
 | E2E | `cd test && npm test` | **30 passed**, 40.3s, 0 failed |
-| Docker image | `docker build` / `docker compose up` | **not run** — no Docker daemon in this environment |
+| Docker image | `docker build` / `docker compose up` | **not run** — no Docker daemon in this environment *(since verified — see §0)* |
 | Live LLM call | real OpenRouter/Cerebras completion | **not run** — no API key configured |
 
 ### Backend coverage — 96% overall (1103 statements, 48 missed)
@@ -329,9 +359,10 @@ already; it would be safer as "either path is supported; check `docker info` bef
 
 ## 6. Recommended order of work
 
-> **Items 1-5 are complete** — see §0 for what landed where. Item 6 is still open: neither the
-> Docker image nor a live LLM call has been exercised, and Massive now has a third unverified
-> path of its own (the supplied key is not entitled to the endpoint the poller uses).
+> **Items 1-5 are complete** — see §0 for what landed where. Item 6 is now mostly closed: the
+> Docker image builds, runs and passes all 30 E2E specs (§0). Still open are a live LLM call,
+> Massive against real data (the supplied key is not entitled to the endpoint the poller uses),
+> and `docker-compose.test.yml`, which this VM cannot run.
 
 1. **§4.1** — start the price feed from watchlist ∪ held positions (`app/main.py`), with a regression test.
 2. **§4.3** — make `npm run typecheck` pass on a clean checkout.
