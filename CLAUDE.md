@@ -1,7 +1,11 @@
 # FinAlly Project - the Finance Ally
 
-All project documentation is in the `planning` directory.
+All project documentation is in the `planning` directory. Read these only when
+the task needs them:
 
-The key document is PLAN.md included in full below; the market data component has been completed and is summarized in the file `planning/MARKET_DATA_SUMMARY.md` with more details in the `planning/archive` folder. Consult these docs only when required. The remainder of the platform is still to be developed.
-
-@planning/PLAN.md
+- `planning/PLAN.md` — the original build specification. The platform it
+  describes is now built, so prefer the code over the spec where they differ.
+- `planning/CONTRACTS.md` — the module ownership and API contract the build
+  follows.
+- `planning/MARKET_DATA_SUMMARY.md` and `planning/archive/` — market data
+  component detail.
