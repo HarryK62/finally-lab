@@ -12,11 +12,12 @@ from __future__ import annotations
 import logging
 import math
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
 from anyio import from_thread
 from fastapi import HTTPException
 
-from app.config import DEFAULT_USER_ID
+from app.config import DEFAULT_USER_ID, get_settings
 from app.db.database import (
     ensure_db,
     get_connection,
@@ -363,6 +364,60 @@ def get_history(
         for row in reversed(rows)
     ]
     return HistoryResponse(snapshots=snapshots)
+
+
+def prune_snapshots(
+    retention_days: int | None = None,
+    min_kept: int = DEFAULT_HISTORY_LIMIT,
+    user_id: str = DEFAULT_USER_ID,
+) -> int:
+    """Delete snapshots older than the retention window. Returns rows removed.
+
+    ``portfolio_snapshots`` grows by one row every 30 seconds (~2,880/day) plus
+    one per trade, in a volume that survives restarts, and nothing else removes
+    rows. Harmless for a demo, unbounded for anything long-lived.
+
+    Two guards keep this from ever emptying the P&L chart:
+
+    - ``retention_days <= 0`` disables pruning entirely (the escape hatch).
+    - The most recent ``min_kept`` rows survive regardless of age, so an app left
+      off for longer than the window comes back to a drawable chart rather than a
+      blank one. The default is the chart's own default page size, which also
+      means a database too small to be a growth problem is never touched.
+
+    ``recorded_at`` is ISO-8601 UTC, which sorts lexicographically, so the string
+    comparison below is chronological and uses ``idx_snapshots_user_time``.
+    """
+    if retention_days is None:
+        retention_days = get_settings().SNAPSHOT_RETENTION_DAYS
+    if retention_days <= 0:
+        return 0
+
+    ensure_db()
+    cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat(
+        timespec="milliseconds"
+    ).replace("+00:00", "Z")
+
+    with write_connection() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM portfolio_snapshots
+            WHERE user_id = ?
+              AND recorded_at < ?
+              AND id NOT IN (
+                  SELECT id FROM portfolio_snapshots
+                  WHERE user_id = ?
+                  ORDER BY recorded_at DESC, rowid DESC
+                  LIMIT ?
+              )
+            """,
+            (user_id, cutoff, user_id, max(0, min_kept)),
+        )
+        removed = cursor.rowcount
+
+    if removed:
+        logger.info("Pruned %d portfolio snapshots older than %dd", removed, retention_days)
+    return removed
 
 
 def record_snapshot(user_id: str = DEFAULT_USER_ID, total_value: float | None = None) -> None:

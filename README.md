@@ -47,6 +47,7 @@ simulator, and the chat panel returns a clean "not configured" error.
 | `OPENROUTER_API_KEY` | No — needed only for live AI chat | OpenRouter API key; without it `/api/chat` returns 503 |
 | `MASSIVE_API_KEY` | No | Massive (Polygon.io) key for real market data; omit to use simulator |
 | `LLM_MOCK` | No | Set `true` for deterministic mock LLM responses (testing) |
+| `SNAPSHOT_RETENTION_DAYS` | No | Days of P&L history to keep (default `7`, `0` keeps everything) |
 
 ## Local development (without Docker)
 

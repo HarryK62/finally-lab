@@ -29,6 +29,11 @@ load_dotenv(REPO_ROOT / ".env", override=False)
 DEFAULT_USER_ID = "default"
 SNAPSHOT_INTERVAL_SECONDS = 30
 
+# How often the snapshot loop prunes old rows. Pruning is cheap but pointless to
+# run every 30 seconds, so it happens on its own slower cadence.
+SNAPSHOT_PRUNE_INTERVAL_SECONDS = 3600
+DEFAULT_SNAPSHOT_RETENTION_DAYS = 7
+
 _TRUE_VALUES = {"true", "1"}
 
 
@@ -40,6 +45,21 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in _TRUE_VALUES
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read an int env var, falling back to ``default`` on anything unparseable.
+
+    A typo in a retention setting must not stop the app from booting, and the
+    fallback errs the safe way: keep more, delete less.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """Immutable snapshot of the process configuration."""
@@ -49,6 +69,7 @@ class Settings:
     MASSIVE_API_KEY: str
     LLM_MOCK: bool
     STATIC_DIR: Path
+    SNAPSHOT_RETENTION_DAYS: int = DEFAULT_SNAPSHOT_RETENTION_DAYS
     DEFAULT_USER_ID: str = DEFAULT_USER_ID
     SNAPSHOT_INTERVAL_SECONDS: int = SNAPSHOT_INTERVAL_SECONDS
 
@@ -70,4 +91,7 @@ def get_settings() -> Settings:
         MASSIVE_API_KEY=os.environ.get("MASSIVE_API_KEY", "").strip(),
         LLM_MOCK=_env_flag("LLM_MOCK"),
         STATIC_DIR=Path(os.environ.get("STATIC_DIR") or (REPO_ROOT / "backend" / "static")),
+        SNAPSHOT_RETENTION_DAYS=_env_int(
+            "SNAPSHOT_RETENTION_DAYS", DEFAULT_SNAPSHOT_RETENTION_DAYS
+        ),
     )

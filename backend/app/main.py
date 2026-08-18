@@ -28,11 +28,15 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from app.api import chat, health, portfolio, watchlist
-from app.config import SNAPSHOT_INTERVAL_SECONDS, get_settings
+from app.config import (
+    SNAPSHOT_INTERVAL_SECONDS,
+    SNAPSHOT_PRUNE_INTERVAL_SECONDS,
+    get_settings,
+)
 from app.db.database import init_db
 from app.market import create_market_data_source, create_stream_router
 from app.runtime import get_price_cache, set_market_source
-from app.services.portfolio import record_snapshot
+from app.services.portfolio import prune_snapshots, record_snapshot
 from app.services.watchlist import get_startup_tickers
 
 logging.basicConfig(
@@ -43,13 +47,28 @@ logger = logging.getLogger(__name__)
 
 
 async def _snapshot_loop() -> None:
-    """Record a portfolio value snapshot every ``SNAPSHOT_INTERVAL_SECONDS``."""
+    """Record a portfolio value snapshot every ``SNAPSHOT_INTERVAL_SECONDS``.
+
+    Also prunes snapshots past the retention window, on the slower
+    ``SNAPSHOT_PRUNE_INTERVAL_SECONDS`` cadence — the table otherwise grows
+    without bound in a volume that survives restarts.
+    """
+    since_prune = 0.0
     while True:
         await asyncio.sleep(SNAPSHOT_INTERVAL_SECONDS)
         try:
             await to_thread.run_sync(record_snapshot)
         except Exception:
             logger.exception("Portfolio snapshot failed")
+
+        since_prune += SNAPSHOT_INTERVAL_SECONDS
+        if since_prune >= SNAPSHOT_PRUNE_INTERVAL_SECONDS:
+            since_prune = 0.0
+            try:
+                await to_thread.run_sync(prune_snapshots)
+            except Exception:
+                # Housekeeping must never take the snapshot loop down with it.
+                logger.exception("Portfolio snapshot prune failed")
 
 
 @asynccontextmanager
@@ -64,6 +83,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # One snapshot at boot so the P&L chart is never empty on a fresh database.
     await to_thread.run_sync(record_snapshot)
+
+    # Tidy up immediately too: a container that was off for a while would
+    # otherwise carry its backlog until the first prune interval elapses.
+    try:
+        await to_thread.run_sync(prune_snapshots)
+    except Exception:
+        logger.exception("Portfolio snapshot prune failed at startup")
 
     snapshot_task = asyncio.create_task(_snapshot_loop(), name="portfolio-snapshots")
     logger.info("FinAlly backend ready with %d tickers", len(tickers))
