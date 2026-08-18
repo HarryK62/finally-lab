@@ -375,3 +375,127 @@ def test_a_rejected_trade_writes_no_trade_row(temp_db, seeded_prices):
 
 def test_normalize_ticker():
     assert svc.normalize_ticker("  aapl ") == "AAPL"
+
+
+# --- Snapshot retention ---
+#
+# portfolio_snapshots grows by one row every 30s plus one per trade, in a volume
+# that survives restarts, and nothing else removes rows.
+
+
+def _snapshot_at(recorded_at: str, user_id: str = "default", value: float = 10_000.0) -> None:
+    """Insert a snapshot with an explicit timestamp, bypassing record_snapshot."""
+    from app.db.database import new_id, write_connection
+
+    with write_connection() as conn:
+        conn.execute(
+            "INSERT INTO portfolio_snapshots (id, user_id, total_value, recorded_at)"
+            " VALUES (?, ?, ?, ?)",
+            (new_id(), user_id, value, recorded_at),
+        )
+
+
+def _iso_days_ago(days: float) -> str:
+    from datetime import UTC, datetime, timedelta
+
+    moment = datetime.now(UTC) - timedelta(days=days)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _snapshot_count(user_id: str = "default") -> int:
+    from app.db.database import get_connection
+
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM portfolio_snapshots WHERE user_id = ?", (user_id,)
+        ).fetchone()["n"]
+
+
+def test_prune_removes_snapshots_past_the_window(temp_db, seeded_prices):
+    _snapshot_at(_iso_days_ago(10))
+    _snapshot_at(_iso_days_ago(8))
+    _snapshot_at(_iso_days_ago(1))
+
+    removed = svc.prune_snapshots(retention_days=7, min_kept=0)
+
+    assert removed == 2
+    assert _snapshot_count() == 1
+
+
+def test_prune_keeps_everything_inside_the_window(temp_db, seeded_prices):
+    _snapshot_at(_iso_days_ago(6))
+    _snapshot_at(_iso_days_ago(0.5))
+
+    assert svc.prune_snapshots(retention_days=7, min_kept=0) == 0
+    assert _snapshot_count() == 2
+
+
+def test_a_non_positive_retention_disables_pruning(temp_db, seeded_prices):
+    """The escape hatch: keep everything, however old."""
+    _snapshot_at(_iso_days_ago(400))
+
+    assert svc.prune_snapshots(retention_days=0, min_kept=0) == 0
+    assert svc.prune_snapshots(retention_days=-1, min_kept=0) == 0
+    assert _snapshot_count() == 1
+
+
+def test_prune_never_empties_the_chart(temp_db, seeded_prices):
+    """Every row is ancient, but the newest `min_kept` survive anyway.
+
+    An app left off for longer than the window would otherwise come back to a
+    blank P&L chart.
+    """
+    for day in range(30, 25, -1):
+        _snapshot_at(_iso_days_ago(day))
+
+    removed = svc.prune_snapshots(retention_days=7, min_kept=3)
+
+    assert removed == 2
+    assert _snapshot_count() == 3
+
+
+def test_the_default_floor_spares_a_small_database(temp_db, seeded_prices):
+    """A table too small to be a growth problem is left alone entirely."""
+    for day in range(30, 25, -1):
+        _snapshot_at(_iso_days_ago(day))
+
+    assert svc.prune_snapshots(retention_days=7) == 0
+    assert _snapshot_count() == 5
+
+
+def test_the_floor_keeps_the_newest_rows_not_arbitrary_ones(temp_db, seeded_prices):
+    """What survives must be the most recent, or the chart draws a stale tail."""
+    for day, value in ((30, 1.0), (29, 2.0), (28, 3.0)):
+        _snapshot_at(_iso_days_ago(day), value=value)
+
+    svc.prune_snapshots(retention_days=7, min_kept=1)
+
+    assert [s.total_value for s in svc.get_history().snapshots] == [3.0]
+
+
+def test_prune_leaves_other_users_alone(temp_db, seeded_prices):
+    _snapshot_at(_iso_days_ago(10), user_id="default")
+    _snapshot_at(_iso_days_ago(10), user_id="someone-else")
+
+    svc.prune_snapshots(retention_days=7, min_kept=0)
+
+    assert _snapshot_count("someone-else") == 1
+
+
+def test_prune_reads_retention_from_settings(temp_db, seeded_prices, monkeypatch):
+    monkeypatch.setenv("SNAPSHOT_RETENTION_DAYS", "2")
+    _snapshot_at(_iso_days_ago(5))
+    _snapshot_at(_iso_days_ago(1))
+
+    assert svc.prune_snapshots(min_kept=0) == 1
+    assert _snapshot_count() == 1
+
+
+def test_history_still_reads_after_a_prune(temp_db, seeded_prices):
+    _snapshot_at(_iso_days_ago(10), value=9_000.0)
+    _snapshot_at(_iso_days_ago(1), value=11_000.0)
+
+    svc.prune_snapshots(retention_days=7, min_kept=0)
+
+    snapshots = svc.get_history().snapshots
+    assert [s.total_value for s in snapshots] == [11_000.0]
